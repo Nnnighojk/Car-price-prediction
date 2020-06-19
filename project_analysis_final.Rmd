@@ -1,0 +1,188 @@
+---
+title: "Project_STAT512"
+author: "Nivedita Nighojkar, Jinyong Lee"
+date: "04/25/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r load libraries}
+library(car)
+library(alr4)
+library(ALSM)
+library(onewaytests)
+library(MASS)
+library(fmsb)
+library(leaps)
+library(caret)
+#library(lmridge)
+```
+
+``` {r load auto price data}
+
+patha = "/Users/niveditanighojkar/Desktop/spring_2020/stat_512/section_4_group_17/"
+# patha = "C:/Users/csuser/Downloads/"
+data_all = "Automobile_data.csv"
+read_file = paste(patha, data_all, sep='')
+
+auto_prices = read.csv(read_file, header=TRUE, sep=",") 
+#data cleaning
+new_auto_data = na.omit(auto_prices)
+
+factor_make = factor(new_auto_data$make)
+factor_fuel = factor(new_auto_data$fuel.type)
+factor_aspriration = factor(new_auto_data$aspiration)
+factor_doors = factor(new_auto_data$num.of.doors)
+factor_body = factor(new_auto_data$body.style)
+factor_drive = factor(new_auto_data$drive.wheels)
+factor_type = factor(new_auto_data$engine.type)
+factor_num = factor(new_auto_data$num.of.cylinders)
+factor_sys = factor(new_auto_data$fuel.system)
+factor_loc = factor(new_auto_data$engine.location)
+
+final_auto_prices = cbind(new_auto_data$price, new_auto_data$symboling, new_auto_data$normalized.losses, factor_make, factor_fuel, factor_aspriration, factor_doors, factor_body, factor_drive, new_auto_data$wheel.base, new_auto_data$length, new_auto_data$width, new_auto_data$height, new_auto_data$curb.weight, factor_type, factor_num, new_auto_data$engine.size, factor_sys, new_auto_data$bore, new_auto_data$stroke, new_auto_data$compression.ratio, new_auto_data$horsepower, new_auto_data$peak.rpm, new_auto_data$city.mpg, new_auto_data$highway.mpg,factor_loc )
+
+colnames(final_auto_prices) = c("price","symboling", "normalized.losses", "make", "fuel.type", "aspiration", "num.of.doors", "body.style", "drive.wheels", "wheel.base", "length", "width", "height", "curb.weight", "engine.type", "num.of.cylinders", "engine.size", "fuel.system", "bore", "stroke", "compression.ratio", "horsepower", "peak.rpm", "city.mpg" , "highway.mpg", "engine.location" )
+
+final_auto_prices = as.data.frame(final_auto_prices)
+
+```
+
+```{r select subset of 24 predictors}
+predictor_names=c("price","symboling", "normalized.losses", "make", "fuel.type", "aspiration", "num.of.doors", "body.style", "drive.wheels", "wheel.base", "length", "width", "height", "curb.weight", "engine.type", "num.of.cylinders", "engine.size", "fuel.system", "bore", "stroke", "compression.ratio", "horsepower", "peak.rpm", "city.mpg" , "highway.mpg")
+predictor_names
+
+price_data = final_auto_prices[,predictor_names]
+
+sapply(price_data, typeof)
+
+ # Pearson correlation matrix of the predictors
+ nl = length(predictor_names)
+ cor_matrix = cor(price_data[,predictor_names[2:nl]])   
+
+```
+
+```{r Linear regression}
+model_lm = lm(price~., price_data)
+summary(model_lm)
+anova(model_lm)
+
+residualPlots(model_lm, smooth = F)
+```
+
+```{r Diagnostics}
+# BF test 
+price_data$fit = model_lm$fitted.values
+price_data$group = cut(price_data$fit, 5)
+price_data$residual = model_lm$residuals
+bf.test(residual~group, price_data) 
+
+#shapiro, non normal
+resid = residuals(model_lm)
+shapiro.test(resid)
+qqnorm(resid)
+qqline(resid)
+```
+
+```{r Box-Cox}
+#bcmle=boxcox(model_lm,lambda=seq(-3,3, by=0.1)) # Maximum likelihood method
+#lambda=bcmle$x[which.max(bcmle$y)]
+#lambda
+#lam = lambda
+
+### Below is Box Cox based on minimum SSE
+X=price_data[,predictor_names[2:nl]]
+X=as.matrix.data.frame(X)
+goat = boxcox.sse(X[sample(75)],price_data$price[sample(75)],l=seq(-2,0.5,0.01))
+lambda = goat$lambda[which.min(goat$SSE)]
+lambda # This is -0.5, depending on random sampling of data
+lam <- lambda
+```
+```{r Best Subset, Stepwise regression}
+bs<-BestSub(price_data[,2:nl], price_data$price**lam, num=1)  
+bs
+
+price_data = price_data[,predictor_names]
+step(lm(price**lam~., data = price_data), method="both", trace=TRUE)
+
+```
+
+```{r New model}
+# Use best predictors from above analysis
+model_new = lm(price**lam ~ make + fuel.type + num.of.doors + drive.wheels + length + curb.weight + num.of.cylinders + fuel.system + stroke + compression.ratio + horsepower + city.mpg, data = price_data)
+shapiro.test(residuals(model_new))
+summary(model_new)
+anova(model_new)
+residualPlots(model_new, smooth = F)
+```
+
+```{r Additional analysis}
+# Multicollinearity
+vif(model_new)
+
+avPlots(model_new) # Added variable plots
+#need to perform ridge regression
+
+library(lmridge)
+mod1 = lm.ridge(price**lam ~ make + fuel.type + num.of.doors + drive.wheels + length + curb.weight + num.of.cylinders + fuel.system + stroke + compression.ratio + horsepower + city.mpg, data = price_data, lambda = seq(0, 1, 0.02))
+plot(mod1)
+select(mod1)
+
+
+mod2 =lmridge(price**lam ~ make + fuel.type + num.of.doors + drive.wheels + length + curb.weight + num.of.cylinders + fuel.system + stroke + compression.ratio + horsepower + city.mpg,data = as.data.frame(price_data),K = seq(0, 1, 0.02))
+plot(mod2)
+vif(mod2) 
+# The model performs the best in reducing the multicollinearity uses k=0.1
+mod_final = lmridge(price**lam ~ make + fuel.type + num.of.doors + drive.wheels + length + curb.weight + num.of.cylinders + fuel.system + stroke + compression.ratio + horsepower + city.mpg,data = as.data.frame(price_data),K = 0.1)
+summary(mod_final)
+
+dfbetasPlots(model_new) 
+
+fits_lm = dffits(model_new)
+betas_lm = dfbetas(model_new)
+indc = which(abs(betas_lm) > 1)
+
+
+if (length(indc) == 0) {
+        sprintf("No influential point according to DFBETAS test")
+} else {
+        sprintf("There are influential points")
+}
+
+#Tells you where outlier is
+which(abs(betas_lm) > 1, arr.ind=TRUE)
+#need to take out influential points
+influenza = influencePlot(model_new)
+
+hati = lm.influence(model_new)
+critical_h = 2*mean(hati$hat) # critical value for detecting X-outlier
+
+critical_infl = qf(0.2,length(model_new$coefficients), 159)
+my_cook = cooks.distance(model_new)
+which(my_cook > critical_infl) # identify influenctial point based on Cook's distance
+which(my_cook > critical_infl, arr.ind=TRUE)
+
+
+plot(model_lm,pch=18,col='red',which=c(4))
+plot(model_lm, pch=18, col="red",which=c(6))
+plot(model_lm, pch=18, col="red",which=c(5))
+
+## Cross-validation
+# 5-fold cross validation repeated 3 times -- mean error is reported
+train.control = trainControl(method='cv', number=5) 
+
+new_pred = c("make", "fuel.type", "num.of.doors", "drive.wheels", "length", "curb.weight", "num.of.cylinders","fuel.system" , "stroke", "compression.ratio" , "horsepower" , "city.mpg")
+step.model = train(price_data[,new_pred], price_data$price**lam, method='leapBackward', tuneGrid = data.frame(nvmax=length(new_pred)), trControl=train.control)
+step.model$results
+
+```
+
+
+
+
+
